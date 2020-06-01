@@ -1,50 +1,222 @@
 
-class NonSationaryEnv:
-    
-    def __init__(self,envtype = 'abrupt', num_bandits=10, max_time_steps=1000, num_change_points=None):
-        self.env_type=envtype
-        self.num_bandits = num_bandits
-        self.T = max_time_steps
-        self.change_point_indx = 0
-        
-        if num_change_points is None:
-            self.num_change_points = int(np.log(self.T))
-        else:
-            self.num_change_points = num_change_points
-        
-        self.change_points = np.sort(np.random.randint(low=0, high=self.T-1,size=self.num_change_points))       
-        self.mean_rewards = self._create_bandit_means_nonstationary()
-        
-    def _create_bandit_means_nonstationary(self):
-        '''Choose independent random means for each abrupt change point'''
-        return [np.random.normal(size=self.num_bandits) for _ in range(self.num_change_points+1)]
-    
-    def reset(self):
-        """Resets the environment. Typically called before each new experiment"""
-        self.change_point_indx = 0
-        self.mean_rewards = self._create_bandit_means_nonstationary()
-        
-    def get_reward(self, bandit, t):        
-        if bandit >=0 and bandit <=self.num_bandits:
-            if self.change_point_indx< self.num_change_points\
-                    and t > self.change_points[self.change_point_indx]:
-                self.change_point_indx+=1            
-            return np.random.normal(loc=self.mean_rewards[self.change_point_indx-1][bandit], scale=1)
-        else:
-            raise ValueError('argument bandit must be integer >=0 and <={}'.format(self.num_bandits))
-            
+import gym
 
-non_stationary_env = NonSationaryEnv(envtype='abrupt')
+import numpy as np
 
-num_experiments = 2000
-reward_averages_by_eps = []
+import time
 
-for eps in [0.1, 0.01, 0]:
-    reward_histories = np.zeros(non_stationary_env.T)
-    for exp_number in range(num_experiments):
-        non_stationary_env.reset()
-        if exp_number%500 == 0:
-            print('Running Experiment Itrn#{} , epsilon={}'.format(exp_number,eps))
-        history = run_eps_greedy(non_stationary_env, eps=eps, gamma=0.1)
-        reward_histories = np.add(history,reward_histories )
-    reward_averages_by_eps.append(reward_histories/num_experiments)
+
+
+"""
+
+SARSA on policy learning python implementation.
+
+This is a python implementation of the SARSA algorithm in the Sutton and Barto's book on
+
+RL. It's called SARSA because - (state, action, reward, state, action). The only difference
+
+between SARSA and Qlearning is that SARSA takes the next action based on the current policy
+
+while qlearning takes the action with maximum utility of next state.
+
+Using the simplest gym environment for brevity: https://gym.openai.com/envs/FrozenLake-v0/
+
+"""
+
+
+
+def init_q(s, a, type="ones"):
+
+    """
+
+    @param s the number of states
+
+    @param a the number of actions
+
+    @param type random, ones or zeros for the initialization
+
+    """
+
+    if type == "ones":
+
+        return np.ones((s, a))
+
+    elif type == "random":
+
+        return np.random.random((s, a))
+
+    elif type == "zeros":
+
+        return np.zeros((s, a))
+
+
+
+
+
+def epsilon_greedy(Q, epsilon, n_actions, s, train=False):
+
+    """
+
+    @param Q Q values state x action -> value
+
+    @param epsilon for exploration
+
+    @param s number of states
+
+    @param train if true then no random actions selected
+
+    """
+
+    if train or np.random.rand() < epsilon:
+
+        action = np.argmax(Q[s, :])
+
+    else:
+
+        action = np.random.randint(0, n_actions)
+
+    return action
+
+
+
+def sarsa(alpha, gamma, epsilon, episodes, max_steps, n_tests, render = False, test=False):
+
+    """
+
+    @param alpha learning rate
+
+    @param gamma decay factor
+
+    @param epsilon for exploration
+
+    @param max_steps for max step in each episode
+
+    @param n_tests number of test episodes
+
+    """
+
+    env = gym.make('Taxi-v2')
+
+    n_states, n_actions = env.observation_space.n, env.action_space.n
+
+    Q = init_q(n_states, n_actions, type="ones")
+
+    timestep_reward = []
+
+    for episode in range(episodes):
+
+        print(f"Episode: {episode}")
+
+        total_reward = 0
+
+        s = env.reset()
+
+        a = epsilon_greedy(Q, epsilon, n_actions, s)
+
+        t = 0
+
+        done = False
+
+        while t < max_steps:
+
+            if render:
+
+                env.render()
+
+            t += 1
+
+            s_, reward, done, info = env.step(a)
+
+            total_reward += reward
+
+            a_ = epsilon_greedy(Q, epsilon, n_actions, s_)
+
+            if done:
+
+                Q[s, a] += alpha * ( reward  - Q[s, a] )
+
+            else:
+
+                Q[s, a] += alpha * ( reward + (gamma * Q[s_, a_] ) - Q[s, a] )
+
+            s, a = s_, a_
+
+            if done:
+
+                if render:
+
+                    print(f"This episode took {t} timesteps and reward {total_reward}")
+
+                timestep_reward.append(total_reward)
+
+                break
+
+    if render:
+
+        print(f"Here are the Q values:\n{Q}\nTesting now:")
+
+    if test:
+
+        test_agent(Q, env, n_tests, n_actions)
+
+    return timestep_reward
+
+
+
+def test_agent(Q, env, n_tests, n_actions, delay=0.1):
+
+    for test in range(n_tests):
+
+        print(f"Test #{test}")
+
+        s = env.reset()
+
+        done = False
+
+        epsilon = 0
+
+        total_reward = 0
+
+        while True:
+
+            time.sleep(delay)
+
+            env.render()
+
+            a = epsilon_greedy(Q, epsilon, n_actions, s, train=True)
+
+            print(f"Chose action {a} for state {s}")
+
+            s, reward, done, info = env.step(a)
+
+            total_reward += reward
+
+            if done:
+
+                print(f"Episode reward: {total_reward}")
+
+                time.sleep(1)
+
+                break
+
+
+
+
+
+if __name__ =="__main__":
+
+    alpha = 0.4
+
+    gamma = 0.999
+
+    epsilon = 0.9
+
+    episodes = 3000
+
+    max_steps = 2500
+
+    n_tests = 20
+
+    timestep_reward = sarsa(alpha, gamma, epsilon, episodes, max_steps, n_tests)
+
+    print(timestep_reward)
